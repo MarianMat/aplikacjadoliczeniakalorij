@@ -1,4 +1,4 @@
-# Licznik Kalorii w Streamlit 🍽️
+# Licznik Kalorii w Streamlit 🍽️ V.1
 
 Prosta aplikacja webowa do codziennego zapisu spożywanych posiłków, oceny ich wartości odżywczej oraz indeksu glikemicznego.
 
