@@ -4,4 +4,4 @@ requests
 pillow
 openai
 pyzbar
-opencv-python
+opencv-python-headless
