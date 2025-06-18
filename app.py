@@ -12,6 +12,11 @@ import numpy as np
 import base64
 import json
 
+import cv2
+
+image = cv2.imread('sciezka.jpg')
+gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
 # Wczytanie klucza API
 openai.api_key = st.secrets.get("OPENAI_API_KEY")
 
