@@ -4,3 +4,4 @@ requests
 pillow
 openai
 pyzbar
+opencv-python
