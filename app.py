@@ -1,137 +1,167 @@
+# app.py
 import streamlit as st
 import pandas as pd
+import requests
 import os
 from datetime import datetime
 
-# Baza indeksu glikemicznego
-index_glikemiczny = {
-    "soczewica": 32,
-    "fasola": 27,
-    "ciecierzyca": 28,
-    "jabłko": 38,
-    "pomarańcza": 40,
-    "mleko": 30,
-    "jogurt naturalny": 36,
-    "czekolada gorzka": 40,
-    "marchew": 35,
-    "makaron pełnoziarnisty": 42,
-    "ryż basmati": 50,
-    "płatki owsiane": 55,
-    "orzechy włoskie": 15,
-    "migdały": 15,
-    "truskawki": 41,
-    "winogrona": 45,
-    "gruszka": 38,
-    "morele": 34,
-    "śliwki": 29,
-    "mleko sojowe": 34,
-    "jogurt grecki": 11,
-    "banan": 60,
-    "kasza gryczana": 57,
-    "miód": 58,
-    "ananas": 59,
-    "płatki kukurydziane": 65,
-    "kasza jęczmienna": 66,
-    "quinoa": 56,
-    "mąka żytnia": 65,
-    "lody": 61,
-    "chleb żytni": 58,
-    "ziemniaki": 78,
-    "chleb pszenny": 75,
-    "ryż biały": 72,
-    "bagietka": 95,
-    "arbuz": 75,
-    "dynia": 75,
-    "makaron biały": 70,
-    "frytki": 85,
-    "napoje słodzone": 90,
-    "popcorn": 72,
-    "mąka pszenna": 85,
-    "ciastka": 77,
-    "płatki słodzone": 80,
-    "cukier": 100
+# CSV do przechowywania danych
+DATA_FILE = "meals.csv"
+
+def load_data():
+    if os.path.exists(DATA_FILE):
+        return pd.read_csv(DATA_FILE)
+    else:
+        return pd.DataFrame(columns=["Data", "Godzina", "Produkt", "Kalorie", "Bialko", "Tluszcz", "Weglowodany", "Gramatura"])
+
+def save_data(entry):
+    df = load_data()
+    df = pd.concat([df, pd.DataFrame([entry])], ignore_index=True)
+    df.to_csv(DATA_FILE, index=False)
+
+def display_data():
+    df = load_data()
+    st.subheader("📊 Historia posiłków")
+    st.dataframe(df.sort_values(by=["Data", "Godzina"], ascending=False))
+
+# Pobranie danych z OpenFoodFacts
+@st.cache_data
+def get_product_info(barcode):
+    url = f"https://world.openfoodfacts.org/api/v0/product/{barcode}.json"
+    r = requests.get(url)
+    if r.status_code == 200:
+        data = r.json()
+        if data["status"] == 1:
+            p = data["product"]
+            return {
+                "name": p.get("product_name", "Nieznany produkt"),
+                "kcal": p.get("nutriments", {}).get("energy-kcal_100g", 0),
+                "protein": p.get("nutriments", {}).get("proteins_100g", 0),
+                "fat": p.get("nutriments", {}).get("fat_100g", 0),
+                "carbs": p.get("nutriments", {}).get("carbohydrates_100g", 0)
+            }
+    return None
+
+# Indeks glikemiczny - uproszczona baza
+GI_DATABASE = {
+    "biały chleb": "wysoki",
+    "ryż biały": "wysoki",
+    "banan": "średni",
+    "jabłko": "niski",
+    "płatki owsiane": "niski",
+    "słodycze": "wysoki",
+    "marchewka surowa": "niski",
+    "ziemniaki": "wysoki",
+    "soczewica": "niski",
+    "makaron pełnoziarnisty": "średni",
+    "arbuz": "wysoki",
+    "jogurt naturalny": "niski",
+    "miód": "wysoki"
 }
 
-def ocen_posilek(calories, protein, fat, carbs):
-    score = 0
-    if calories < 400: score += 2
-    if protein > 15: score += 3
-    if fat < 15: score += 1
-    if carbs < 40: score += 2
+def check_gi_level(product_name):
+    for name, level in GI_DATABASE.items():
+        if name.lower() in product_name.lower():
+            return level
+    return None
 
-    if score >= 6:
-        return "✅ Zdrowy posiłek"
-    elif score >= 3:
-        return "⚠️ Umiarkowany"
-    else:
-        return "❌ Uważaj na ten posiłek"
-
-def ocen_ig(nazwa_produktu):
-    for nazwa, ig in index_glikemiczny.items():
-        if nazwa in nazwa_produktu.lower():
-            if ig <= 50:
-                return f"✅ Niski IG ({ig}) – zalecany"
-            elif ig <= 70:
-                return f"⚠️ Średni IG ({ig}) – z umiarem"
-            else:
-                return f"❌ Wysoki IG ({ig}) – niewskazany"
-    return "ℹ️ Brak danych o IG"
-
-def add_meal(meal, calories, protein, fat, carbs, meal_type):
-    data = {
-        "date": datetime.now().date(),
-        "time": datetime.now().strftime("%H:%M"),
-        "meal": meal,
-        "type": meal_type,
-        "calories": calories,
-        "protein": protein,
-        "fat": fat,
-        "carbs": carbs
-    }
-    df = pd.DataFrame([data])
-    if os.path.exists("meals.csv"):
-        df.to_csv("meals.csv", mode="a", header=False, index=False)
-    else:
-        df.to_csv("meals.csv", mode="w", header=True, index=False)
-
+# Interfejs Streamlit
 st.set_page_config(page_title="Licznik kalorii", layout="centered")
-st.title("🍽️ Licznik kalorii i ocena posiłków")
+st.title("🥗 Licznik kalorii")
 
-st.header("➕ Dodaj posiłek")
-with st.form("meal_form"):
-    meal = st.text_input("Nazwa posiłku lub produktu")
-    meal_type = st.selectbox("Rodzaj posiłku", ["Śniadanie", "Obiad", "Kolacja", "Przekąska"])
-    calories = st.number_input("Kalorie", 0, 2000)
-    protein = st.number_input("Białko (g)", 0.0, 100.0)
-    fat = st.number_input("Tłuszcz (g)", 0.0, 100.0)
-    carbs = st.number_input("Węglowodany (g)", 0.0, 200.0)
-    submitted = st.form_submit_button("Dodaj posiłek")
+menu = st.sidebar.selectbox("Wybierz opcję", ["➕ Dodaj posiłek", "📷 Z kodu kreskowego", "📊 Historia", "🥦 Indeks glikemiczny"])
 
-if submitted and meal:
-    add_meal(meal, calories, protein, fat, carbs, meal_type)
-    st.success(f"✅ Dodano: {meal} ({calories} kcal)")
-    st.info(f"Ocena posiłku: {ocen_posilek(calories, protein, fat, carbs)}")
-    st.info(f"Indeks glikemiczny: {ocen_ig(meal)}")
-    st.rerun()
+if menu == "➕ Dodaj posiłek":
+    st.subheader("Dodaj posiłek ręcznie")
+    produkt = st.text_input("Nazwa produktu")
+    gramatura = st.number_input("Ilość (w gramach)", min_value=1, value=100)
+    kcal = st.number_input("Kalorie na 100g", min_value=0.0)
+    bialko = st.number_input("Białko na 100g", min_value=0.0)
+    tluszcz = st.number_input("Tłuszcz na 100g", min_value=0.0)
+    weglo = st.number_input("Węglowodany na 100g", min_value=0.0)
 
-st.header("📅 Historia posiłków")
-if os.path.exists("meals.csv"):
-    df = pd.read_csv("meals.csv")
-    df["date"] = pd.to_datetime(df["date"])
-    today = datetime.now().date()
-    today_meals = df[df["date"].dt.date == today]
-    st.subheader(f"Dzisiejsze posiłki – {today.strftime('%Y-%m-%d')}")
-    st.dataframe(today_meals, use_container_width=True)
-    st.markdown(f"**Dzienne podsumowanie:**")
-    st.write(f"🔥 Kalorie: {today_meals['calories'].sum()} kcal")
-    st.write(f"💪 Białko: {today_meals['protein'].sum()} g")
-    st.write(f"🥑 Tłuszcz: {today_meals['fat'].sum()} g")
-    st.write(f"🍞 Węglowodany: {today_meals['carbs'].sum()} g")
-else:
-    st.info("Brak danych – dodaj pierwszy posiłek!")
+    if st.button("Zapisz posiłek"):
+        przel_kcal = round(kcal * gramatura / 100, 2)
+        przel_bialko = round(bialko * gramatura / 100, 2)
+        przel_tluszcz = round(tluszcz * gramatura / 100, 2)
+        przel_weglo = round(weglo * gramatura / 100, 2)
 
-with st.expander("📋 Lista produktów i ich indeks glikemiczny"):
-    df_ig = pd.DataFrame([
-        {"Produkt": nazwa, "IG": ig} for nazwa, ig in index_glikemiczny.items()
-    ])
-    st.table(df_ig.sort_values("IG"))
+        gi = check_gi_level(produkt)
+        if gi == "wysoki":
+            st.error("🚨 Uwaga: produkt ma wysoki indeks glikemiczny!")
+        elif gi == "niski":
+            st.success("✅ Świetnie! Produkt ma niski indeks glikemiczny.")
+        elif gi == "średni":
+            st.warning("ℹ️ Produkt ma średni indeks glikemiczny.")
+
+        save_data({
+            "Data": datetime.now().date().isoformat(),
+            "Godzina": datetime.now().strftime("%H:%M"),
+            "Produkt": produkt,
+            "Kalorie": przel_kcal,
+            "Bialko": przel_bialko,
+            "Tluszcz": przel_tluszcz,
+            "Weglowodany": przel_weglo,
+            "Gramatura": gramatura
+        })
+        st.success("✅ Zapisano posiłek!")
+
+elif menu == "📷 Z kodu kreskowego":
+    st.subheader("Dodaj produkt z kodu kreskowego")
+    barcode = st.text_input("Wpisz kod kreskowy")
+    if st.button("Wyszukaj produkt"):
+        result = get_product_info(barcode)
+        if result:
+            st.write(f"**Znaleziono:** {result['name']}")
+            gramatura = st.number_input("Ilość (w gramach)", min_value=1, value=100)
+
+            przel_kcal = round(result["kcal"] * gramatura / 100, 2)
+            przel_bialko = round(result["protein"] * gramatura / 100, 2)
+            przel_tluszcz = round(result["fat"] * gramatura / 100, 2)
+            przel_weglo = round(result["carbs"] * gramatura / 100, 2)
+
+            gi = check_gi_level(result['name'])
+            if gi == "wysoki":
+                st.error("🚨 Uwaga: produkt ma wysoki indeks glikemiczny!")
+            elif gi == "niski":
+                st.success("✅ Świetnie! Produkt ma niski indeks glikemiczny.")
+            elif gi == "średni":
+                st.warning("ℹ️ Produkt ma średni indeks glikemiczny.")
+
+            if st.button("Zapisz do dziennika"):
+                save_data({
+                    "Data": datetime.now().date().isoformat(),
+                    "Godzina": datetime.now().strftime("%H:%M"),
+                    "Produkt": result['name'],
+                    "Kalorie": przel_kcal,
+                    "Bialko": przel_bialko,
+                    "Tluszcz": przel_tluszcz,
+                    "Weglowodany": przel_weglo,
+                    "Gramatura": gramatura
+                })
+                st.success("✅ Zapisano produkt!")
+        else:
+            st.error("❌ Nie znaleziono produktu dla podanego kodu.")
+
+elif menu == "📊 Historia":
+    display_data()
+
+elif menu == "🥦 Indeks glikemiczny":
+    st.subheader("🥦 Lista produktów wg indeksu glikemicznego")
+    st.markdown("Produkty z **niskim IG** pomagają utrzymać stabilny poziom cukru we krwi.")
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.success("### ✅ Niski IG")
+        for prod in [k for k, v in GI_DATABASE.items() if v == "niski"]:
+            st.write(f"- {prod}")
+
+    with col2:
+        st.warning("### 🟡 Średni IG")
+        for prod in [k for k, v in GI_DATABASE.items() if v == "średni"]:
+            st.write(f"- {prod}")
+
+    with col3:
+        st.error("### ❌ Wysoki IG")
+        for prod in [k for k, v in GI_DATABASE.items() if v == "wysoki"]:
+            st.write(f"- {prod}")
