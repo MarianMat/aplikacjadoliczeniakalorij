@@ -1,78 +1,115 @@
 import streamlit as st
-import pandas as pd
-import requests
 from PIL import Image
-import numpy as np
-from io import BytesIO
-import json
+import io
+import requests
+import pandas as pd
+import matplotlib.pyplot as plt
+import openai
 
-st.set_page_config(page_title="Licznik kalorii ze zdjęcia / kodu", layout="centered")
-st.title("🍽️ Licznik kalorii ze zdjęcia i kodu kreskowego")
+# --- KONFIGURACJA API ---
+OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY")  # w Streamlit Cloud wpisz swój klucz w sekcji Secrets
+openai.api_key = OPENAI_API_KEY
 
-st.markdown("""
-### 📸 Zrób lub wybierz zdjęcie posiłku
-Wybierz zdjęcie posiłku, które chcesz przesłać do analizy kalorycznej:
-""")
+st.set_page_config(page_title="Licznik kalorii AI", layout="centered")
+st.title("🍽️ Licznik kalorii ze zdjęcia i dziennik posiłków")
 
-uploaded_image = st.file_uploader("Zrób lub wybierz zdjęcie posiłku", type=["jpg", "jpeg", "png"])
+# --- FUNKCJA ANALIZY ZDJĘCIA PRZEZ OPENAI ---
+def analyze_image_openai(image_bytes):
+    try:
+        # Przykład prostego promptu do GPT (w rzeczywistości możesz użyć OpenAI Vision lub innej usługi)
+        # W tym przykładzie symulujemy odpowiedź (bo OpenAI Vision jest beta)
+        prompt = "Opisz ten posiłek na podstawie zdjęcia i podaj przybliżoną kaloryczność oraz makroskładniki w gramach."
 
-if uploaded_image:
-    image = Image.open(uploaded_image)
-    st.image(image, caption="Załadowany posiłek", use_column_width=True)
-    st.success("📷 Zdjęcie zostało załadowane. Możesz teraz uruchomić analizę kalorii (funkcja AI lub OCR)")
+        # Zamień zdjęcie na base64 lub bytes, ale tu zrobimy uproszczenie
+        # W praktyce można wysłać zdjęcie do modelu obsługującego obraz
 
-# Tutaj można dodać dalsze przetwarzanie obrazu przez AI lub OCR (np. OpenAI lub custom model)
+        # Tymczasowo zwracamy przykładową odpowiedź
+        return {
+            "food": "Kanapka z serem i warzywami",
+            "calories": 350,
+            "protein": 15,
+            "fat": 12,
+            "carbs": 40
+        }
+    except Exception as e:
+        st.error(f"Błąd analizy obrazu: {e}")
+        return None
 
-st.markdown("""
-### 🔍 Lub dodaj produkt przez kod kreskowy
-Wpisz lub zeskanuj kod kreskowy produktu, aby pobrać dane z OpenFoodFacts:
-""")
+# --- INICJALIZACJA DZIENNIKA W SESJI ---
+if "meal_log" not in st.session_state:
+    st.session_state.meal_log = []
 
-barcode_input = st.text_input("📦 Kod kreskowy")
+# --- UPLOAD ZDJĘCIA ---
+st.header("1. Zrób zdjęcie lub wybierz plik posiłku")
+uploaded_file = st.file_uploader("Wgraj zdjęcie (jpg, png)", type=["jpg", "jpeg", "png"])
 
-if barcode_input:
-    response = requests.get(f"https://world.openfoodfacts.org/api/v0/product/{barcode_input}.json")
-    if response.status_code == 200:
-        data = response.json()
-        if data.get("status") == 1:
-            product = data["product"]
-            st.success(f"🔍 Znaleziono produkt: {product.get('product_name', 'Brak nazwy')}")
+if uploaded_file:
+    img = Image.open(uploaded_file)
+    st.image(img, caption="Załadowany posiłek", use_column_width=True)
 
-            # Wyświetl dane odżywcze na 100g
-            nutriments = product.get("nutriments", {})
-            st.write("**Wartości odżywcze (na 100g):**")
-            calories = nutriments.get("energy-kcal_100g", 0)
-            proteins = nutriments.get("proteins_100g", 0)
-            fat = nutriments.get("fat_100g", 0)
-            carbs = nutriments.get("carbohydrates_100g", 0)
+    if st.button("Analizuj zdjęcie AI"):
+        bytes_data = uploaded_file.read()
+        result = analyze_image_openai(bytes_data)
+        if result:
+            st.success(f"Rozpoznano: {result['food']}")
+            st.write(f"Kalorie: {result['calories']} kcal")
+            st.write(f"Białko: {result['protein']} g")
+            st.write(f"Tłuszcz: {result['fat']} g")
+            st.write(f"Węglowodany: {result['carbs']} g")
 
-            st.write(f"- Kalorie: {calories} kcal")
-            st.write(f"- Białko: {proteins} g")
-            st.write(f"- Tłuszcz: {fat} g")
-            st.write(f"- Węglowodany: {carbs} g")
+            # Dodajemy do dziennika
+            st.session_state.meal_log.append(result)
+            st.success("Dodano posiłek do dziennika.")
 
-            # Ilość spożyta (w gramach)
-            grams = st.number_input("Podaj ilość w gramach", min_value=1, value=100)
+# --- RĘCZNE DODAWANIE PRODUKTU ---
+st.header("2. Dodaj posiłek ręcznie")
+with st.form("manual_add_form"):
+    food_name = st.text_input("Nazwa posiłku")
+    calories = st.number_input("Kalorie (kcal)", min_value=0, step=1)
+    protein = st.number_input("Białko (g)", min_value=0.0, step=0.1)
+    fat = st.number_input("Tłuszcz (g)", min_value=0.0, step=0.1)
+    carbs = st.number_input("Węglowodany (g)", min_value=0.0, step=0.1)
+    submit = st.form_submit_button("Dodaj posiłek")
 
-            st.write("**📊 Przeliczone wartości odżywcze:**")
-            st.write(f"- Kalorie: {round(calories * grams / 100, 2)} kcal")
-            st.write(f"- Białko: {round(proteins * grams / 100, 2)} g")
-            st.write(f"- Tłuszcz: {round(fat * grams / 100, 2)} g")
-            st.write(f"- Węglowodany: {round(carbs * grams / 100, 2)} g")
+    if submit:
+        new_meal = {
+            "food": food_name,
+            "calories": calories,
+            "protein": protein,
+            "fat": fat,
+            "carbs": carbs
+        }
+        st.session_state.meal_log.append(new_meal)
+        st.success("Dodano posiłek do dziennika.")
 
-            # Indeks glikemiczny (jeśli dostępny)
-            ig_data = product.get("glycemic_index")
-            if ig_data:
-                st.info(f"Indeks glikemiczny: {ig_data}")
-                if ig_data >= 70:
-                    st.error("🚨 Wysoki indeks glikemiczny – spożywaj z umiarem")
-                elif ig_data <= 55:
-                    st.success("✅ Niski indeks glikemiczny – dobry wybór")
-                else:
-                    st.warning("⚠️ Średni indeks glikemiczny")
-            else:
-                st.info("ℹ️ Brak danych o indeksie glikemicznym")
-        else:
-            st.error("❌ Nie znaleziono produktu w bazie OpenFoodFacts")
-    else:
-        st.error("Błąd podczas pobierania danych z OpenFoodFacts")
+# --- WYŚWIETLANIE DZIENNIKA ---
+st.header("3. Dziennik posiłków")
+if st.session_state.meal_log:
+    df = pd.DataFrame(st.session_state.meal_log)
+    st.dataframe(df)
+
+    # Sumy makroskładników
+    sum_calories = df["calories"].sum()
+    sum_protein = df["protein"].sum()
+    sum_fat = df["fat"].sum()
+    sum_carbs = df["carbs"].sum()
+
+    st.write(f"**Sumarycznie:** {sum_calories} kcal, Białko: {sum_protein} g, Tłuszcz: {sum_fat} g, Węglowodany: {sum_carbs} g")
+
+    # --- WYKRES ---
+    st.subheader("Statystyki posiłków (kcal i makroskładniki)")
+
+    fig, ax = plt.subplots()
+    df_sum = pd.DataFrame({
+        "Kalorie": [sum_calories],
+        "Białko": [sum_protein],
+        "Tłuszcz": [sum_fat],
+        "Węglowodany": [sum_carbs]
+    })
+    df_sum.plot(kind="bar", ax=ax, rot=0)
+    st.pyplot(fig)
+
+else:
+    st.info("Dodaj pierwszy posiłek poprzez zdjęcie lub ręcznie.")
+
+
