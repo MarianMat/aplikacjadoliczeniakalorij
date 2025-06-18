@@ -226,4 +226,81 @@ elif menu == "📷 Dodaj z kodu kreskowego":
             if gi == "wysoki":
                 st.error("🚨 Uwaga: produkt ma wysoki indeks glikemiczny!")
             elif gi == "niski":
-                st.success("✅ Świetnie! Produkt ma niski indeks
+                st.success("✅ Świetnie! Produkt ma niski indeks glikemiczny.")
+            elif gi == "średni":
+                st.warning("ℹ️ Produkt ma średni indeks glikemiczny.")
+
+            if st.button("Zapisz posiłek"):
+                save_data({
+                    "Data": datetime.now().date().isoformat(),
+                    "Godzina": datetime.now().strftime("%H:%M"),
+                    "Produkt": result["name"],
+                    "Kalorie": przel_kcal,
+                    "Bialko": przel_bialko,
+                    "Tluszcz": przel_tluszcz,
+                    "Weglowodany": przel_weglo,
+                    "Gramatura": gramatura
+                })
+                st.success("✅ Zapisano posiłek!")
+
+        else:
+            st.error("Nie znaleziono produktu w bazie OpenFoodFacts.")
+
+elif menu == "📸 Dodaj ze zdjęcia (AI)":
+    st.subheader("Dodaj posiłek ze zdjęcia")
+    uploaded_file = st.file_uploader("Wybierz zdjęcie", type=["jpg", "jpeg", "png"])
+    if uploaded_file:
+        img_bytes = uploaded_file.read()
+        image = Image.open(BytesIO(img_bytes))
+        st.image(image, caption="Twoje zdjęcie", use_column_width=True)
+
+        if st.button("Analizuj zdjęcie (AI)"):
+            with st.spinner("Analizuję zdjęcie..."):
+                try:
+                    text_resp = analyze_image_with_openai(img_bytes)
+                    st.markdown("**Odpowiedź AI:**")
+                    st.write(text_resp)
+
+                    data = parse_openai_response(text_resp)
+
+                    gi_levels = [check_gi_level(i) for i in data["ingredients"]]
+                    gi_levels = [lvl for lvl in gi_levels if lvl is not None]
+
+                    # Prosta logika dla alertu:
+                    if "wysoki" in gi_levels:
+                        st.error("🚨 Uwaga: w posiłku jest składnik o wysokim indeksie glikemicznym!")
+                    elif "średni" in gi_levels:
+                        st.warning("ℹ️ W posiłku są składniki o średnim indeksie glikemicznym.")
+                    else:
+                        st.success("✅ Posiłek ma niskie indeksy glikemiczne.")
+
+                    gramatura = st.number_input("Podaj ilość posiłku (g)", min_value=1, value=100)
+
+                    if st.button("Zapisz posiłek"):
+                        przel_kcal = round(data["kcal"] * gramatura / 100, 2)
+                        przel_bialko = round(data["protein"] * gramatura / 100, 2)
+                        przel_tluszcz = round(data["fat"] * gramatura / 100, 2)
+                        przel_weglo = round(data["carbs"] * gramatura / 100, 2)
+
+                        save_data({
+                            "Data": datetime.now().date().isoformat(),
+                            "Godzina": datetime.now().strftime("%H:%M"),
+                            "Produkt": ", ".join(data["ingredients"]),
+                            "Kalorie": przel_kcal,
+                            "Bialko": przel_bialko,
+                            "Tluszcz": przel_tluszcz,
+                            "Weglowodany": przel_weglo,
+                            "Gramatura": gramatura
+                        })
+                        st.success("✅ Zapisano posiłek!")
+
+                except Exception as e:
+                    st.error(f"Błąd podczas analizy: {e}")
+
+elif menu == "🥦 Indeks glikemiczny":
+    st.subheader("Indeks glikemiczny - baza produktów")
+    df_gi = pd.DataFrame(list(GI_DATABASE.items()), columns=["Produkt", "Indeks glikemiczny"])
+    st.dataframe(df_gi)
+
+elif menu == "📊 Historia posiłków":
+    display_data()
