@@ -1,12 +1,39 @@
-# app.py
 import streamlit as st
 import pandas as pd
 import requests
 import os
 from datetime import datetime
+from io import BytesIO
+from PIL import Image
+import openai
 
-# CSV do przechowywania danych
+# -------------------
+# KONFIGURACJA API OpenAI
+# -------------------
+openai.api_key = st.secrets["OPENAI_API_KEY"]
+
 DATA_FILE = "meals.csv"
+
+# Baza indeksów glikemicznych (prosta przykładowa)
+GI_DATABASE = {
+    "biały chleb": "wysoki",
+    "ryż biały": "wysoki",
+    "banan": "średni",
+    "jabłko": "niski",
+    "płatki owsiane": "niski",
+    "słodycze": "wysoki",
+    "marchewka surowa": "niski",
+    "ziemniaki": "wysoki",
+    "soczewica": "niski",
+    "makaron pełnoziarnisty": "średni",
+    "arbuz": "wysoki",
+    "jogurt naturalny": "niski",
+    "miód": "wysoki"
+}
+
+# -------------------
+# FUNKCJE
+# -------------------
 
 def load_data():
     if os.path.exists(DATA_FILE):
@@ -24,8 +51,13 @@ def display_data():
     st.subheader("📊 Historia posiłków")
     st.dataframe(df.sort_values(by=["Data", "Godzina"], ascending=False))
 
-# Pobranie danych z OpenFoodFacts
-@st.cache_data
+def check_gi_level(product_name):
+    for name, level in GI_DATABASE.items():
+        if name.lower() in product_name.lower():
+            return level
+    return None
+
+@st.cache_data(show_spinner=False)
 def get_product_info(barcode):
     url = f"https://world.openfoodfacts.org/api/v0/product/{barcode}.json"
     r = requests.get(url)
@@ -42,36 +74,106 @@ def get_product_info(barcode):
             }
     return None
 
-# Indeks glikemiczny - uproszczona baza
-GI_DATABASE = {
-    "biały chleb": "wysoki",
-    "ryż biały": "wysoki",
-    "banan": "średni",
-    "jabłko": "niski",
-    "płatki owsiane": "niski",
-    "słodycze": "wysoki",
-    "marchewka surowa": "niski",
-    "ziemniaki": "wysoki",
-    "soczewica": "niski",
-    "makaron pełnoziarnisty": "średni",
-    "arbuz": "wysoki",
-    "jogurt naturalny": "niski",
-    "miód": "wysoki"
-}
+def analyze_image_with_openai(image_bytes):
+    """
+    Wysyła zdjęcie do OpenAI GPT-4 Vision (model GPT-4 z możliwością analizy obrazów)
+    i prosi o rozpoznanie składników oraz podanie kalorii i makroskładników.
+    """
 
-def check_gi_level(product_name):
-    for name, level in GI_DATABASE.items():
-        if name.lower() in product_name.lower():
-            return level
-    return None
+    messages = [
+        {"role": "system", "content": "Jesteś pomocnym asystentem, który analizuje zdjęcia posiłków i podaje listę składników oraz kalorie i makroskładniki."},
+        {"role": "user", "content": "Oceń ten posiłek. Podaj listę składników, kalorie, białko, tłuszcz i węglowodany w gramach."}
+    ]
 
-# Interfejs Streamlit
-st.set_page_config(page_title="Licznik kalorii", layout="centered")
-st.title("🥗 Licznik kalorii")
+    response = openai.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=messages,
+        files=[{
+            "filename": "meal.jpg",
+            "contents": image_bytes
+        }]
+    )
 
-menu = st.sidebar.selectbox("Wybierz opcję", ["➕ Dodaj posiłek", "📷 Z kodu kreskowego", "📊 Historia", "🥦 Indeks glikemiczny"])
+    # Odpowiedź powinna zawierać tekst z rozpoznaniem
+    return response.choices[0].message.content
 
-if menu == "➕ Dodaj posiłek":
+def parse_openai_response(text):
+    """
+    Przetwarza odpowiedź GPT, aby wyciągnąć składniki i wartości odżywcze.
+    Zakładamy prosty format (np. JSON lub listę), ale jeśli GPT zwróci tekst, trzeba będzie to dostosować.
+    Dla uproszczenia zrobimy parser tekstowy.
+    """
+
+    # Prosty parser - zakładamy, że w tekście jest coś takiego:
+    # Składniki: jabłko, banan
+    # Kalorie: 150
+    # Białko: 2g
+    # Tłuszcz: 1g
+    # Węglowodany: 30g
+
+    lines = text.split("\n")
+    data = {
+        "ingredients": [],
+        "kcal": 0,
+        "protein": 0,
+        "fat": 0,
+        "carbs": 0
+    }
+
+    for line in lines:
+        line = line.strip().lower()
+        if line.startswith("składniki") or line.startswith("ingredients"):
+            parts = line.split(":")
+            if len(parts) > 1:
+                ingr = parts[1].split(",")
+                data["ingredients"] = [i.strip() for i in ingr]
+        elif line.startswith("kalorie") or line.startswith("calories"):
+            parts = line.split(":")
+            if len(parts) > 1:
+                try:
+                    data["kcal"] = float(parts[1].strip().replace("kcal", ""))
+                except:
+                    pass
+        elif line.startswith("białko") or line.startswith("protein"):
+            parts = line.split(":")
+            if len(parts) > 1:
+                try:
+                    data["protein"] = float(parts[1].strip().replace("g", ""))
+                except:
+                    pass
+        elif line.startswith("tłuszcz") or line.startswith("fat"):
+            parts = line.split(":")
+            if len(parts) > 1:
+                try:
+                    data["fat"] = float(parts[1].strip().replace("g", ""))
+                except:
+                    pass
+        elif line.startswith("węglowodany") or line.startswith("carbohydrates") or line.startswith("carbs"):
+            parts = line.split(":")
+            if len(parts) > 1:
+                try:
+                    data["carbs"] = float(parts[1].strip().replace("g", ""))
+                except:
+                    pass
+
+    return data
+
+# -------------------
+# INTERFEJS Streamlit
+# -------------------
+
+st.set_page_config(page_title="Licznik kalorii AI", layout="centered")
+st.title("🥗 Licznik kalorii z AI - zdjęcie + kod kreskowy + IG")
+
+menu = st.sidebar.selectbox("Wybierz opcję", [
+    "➕ Dodaj posiłek ręcznie",
+    "📷 Dodaj z kodu kreskowego",
+    "📸 Dodaj ze zdjęcia (AI)",
+    "🥦 Indeks glikemiczny",
+    "📊 Historia posiłków"
+])
+
+if menu == "➕ Dodaj posiłek ręcznie":
     st.subheader("Dodaj posiłek ręcznie")
     produkt = st.text_input("Nazwa produktu")
     gramatura = st.number_input("Ilość (w gramach)", min_value=1, value=100)
@@ -106,7 +208,7 @@ if menu == "➕ Dodaj posiłek":
         })
         st.success("✅ Zapisano posiłek!")
 
-elif menu == "📷 Z kodu kreskowego":
+elif menu == "📷 Dodaj z kodu kreskowego":
     st.subheader("Dodaj produkt z kodu kreskowego")
     barcode = st.text_input("Wpisz kod kreskowy")
     if st.button("Wyszukaj produkt"):
@@ -124,44 +226,4 @@ elif menu == "📷 Z kodu kreskowego":
             if gi == "wysoki":
                 st.error("🚨 Uwaga: produkt ma wysoki indeks glikemiczny!")
             elif gi == "niski":
-                st.success("✅ Świetnie! Produkt ma niski indeks glikemiczny.")
-            elif gi == "średni":
-                st.warning("ℹ️ Produkt ma średni indeks glikemiczny.")
-
-            if st.button("Zapisz do dziennika"):
-                save_data({
-                    "Data": datetime.now().date().isoformat(),
-                    "Godzina": datetime.now().strftime("%H:%M"),
-                    "Produkt": result['name'],
-                    "Kalorie": przel_kcal,
-                    "Bialko": przel_bialko,
-                    "Tluszcz": przel_tluszcz,
-                    "Weglowodany": przel_weglo,
-                    "Gramatura": gramatura
-                })
-                st.success("✅ Zapisano produkt!")
-        else:
-            st.error("❌ Nie znaleziono produktu dla podanego kodu.")
-
-elif menu == "📊 Historia":
-    display_data()
-
-elif menu == "🥦 Indeks glikemiczny":
-    st.subheader("🥦 Lista produktów wg indeksu glikemicznego")
-    st.markdown("Produkty z **niskim IG** pomagają utrzymać stabilny poziom cukru we krwi.")
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.success("### ✅ Niski IG")
-        for prod in [k for k, v in GI_DATABASE.items() if v == "niski"]:
-            st.write(f"- {prod}")
-
-    with col2:
-        st.warning("### 🟡 Średni IG")
-        for prod in [k for k, v in GI_DATABASE.items() if v == "średni"]:
-            st.write(f"- {prod}")
-
-    with col3:
-        st.error("### ❌ Wysoki IG")
-        for prod in [k for k, v in GI_DATABASE.items() if v == "wysoki"]:
-            st.write(f"- {prod}")
+                st.success("✅ Świetnie! Produkt ma niski indeks
