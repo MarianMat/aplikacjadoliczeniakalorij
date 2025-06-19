@@ -5,3 +5,4 @@ pillow
 openai
 pyzbar
 opencv-python-headless
+matplotlib
